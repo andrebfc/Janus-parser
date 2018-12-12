@@ -8,6 +8,8 @@ rda *create_rda(struct rda *it, struct argument *argu, struct instruction *istp)
     it->next = NULL;
     it->arg = NULL;
     it->isp = NULL;
+    it->sub_rda = NULL;
+    it->sup_rda = NULL;
     istp = it->isp;
     argu = it->arg;
   }
@@ -15,9 +17,10 @@ rda *create_rda(struct rda *it, struct argument *argu, struct instruction *istp)
     it = new rda;
     it->next = NULL;
     it->prev = NULL;
-    //head = iter;
     it->arg = NULL;
     it->isp = NULL;
+    it->sub_rda = NULL;
+    it->sup_rda = NULL;
     istp = it->isp;
     argu = it->arg;
   }

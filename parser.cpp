@@ -25,10 +25,6 @@ ptr_isp isp = NULL;
 ptr_arg arg = NULL;
 ptr_arg iter_arg = NULL;
 ptr_isp iter_isp = NULL;
-
-ptr_rda sup_iter = NULL;
-ptr_arg sup_iter_arg = NULL;
-ptr_isp sup_iter_isp = NULL;
 ptr_isp isp_assert = NULL;
 /*function for writing c file */
 int declare_fun(struct rda *rda,struct argument *arg,int reverse); //flag = 0 forward, flag = 1 backward
@@ -241,12 +237,10 @@ void get_token(char *token){
      // token is if
      else if(strcmp(token,r_if)==0){
        iter_isp->flag_sub = 1;
-       sup_iter = iter;
-       sup_iter_arg = iter_arg;
-       sup_iter_isp = iter_isp;
        //create a sub rda
-       iter = create_rda(iter,iter_arg,iter_isp);
-       sup_iter->sub_rda = iter;
+       iter->sub_rda = create_rda(iter->sub_rda,iter_arg,iter_isp);
+       iter->sub_rda->sup_rda = iter;
+       iter = iter->sub_rda;
        iter_arg = iter->arg;
        iter_isp = iter->isp;
        asprintf(&(iter->name),token);
@@ -358,9 +352,16 @@ int get_instruction(char *token, char *tmp){
       w_assert = 0;
       w_if_assert = 0;
       isp_assert = NULL;
-      iter = sup_iter;
-      iter_arg = sup_iter_arg;
-      iter_isp = sup_iter_isp;
+      // return at first rda element
+      while(iter->prev != NULL){
+        iter = iter->prev;
+      }
+      iter = iter->sup_rda;
+      iter_isp = iter->isp;
+      while(iter_isp->next != NULL){
+        iter_isp = iter_isp->next;
+      }
+      //iter_arg = iter->arg;
       return 5;
     }
     // get sub instruction
