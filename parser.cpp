@@ -761,7 +761,6 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
         //fprintf(out,"\t\tassert(!(%s));\n",if_condition);
         fprintf(out,"\t\tassert(!(%s));\n",iter_cond->cond);
         //reset_arr(if_condition);
-        cout<<iter_cond->cond<<endl;
         if(iter_cond->prev != NULL){
           iter_cond = iter_cond->prev;
           iter_cond->next = NULL;
