@@ -10,6 +10,7 @@ rda *create_rda(struct rda *it, struct argument *argu, struct instruction *istp)
     it->isp = NULL;
     it->sub_rda = NULL;
     it->sup_rda = NULL;
+    it->f_ist = NULL;
     istp = it->isp;
     argu = it->arg;
   }
@@ -68,4 +69,34 @@ instruction *create_call(struct instruction *isp){
     isp->call = new call_ist;
     return isp;
   }
+}
+
+condition *add_cond(struct condition *cond,char *condi){
+  if(cond !=NULL){
+    cond->next = new condition;
+    cond->next->prev = cond;
+    cond = cond->next;
+    asprintf(&(cond->cond),condi);
+    cond->next = NULL;
+    return cond;
+  }
+  else {
+    cond = new condition;
+    asprintf(&(cond->cond),condi);
+    cond->next = NULL;
+    cond->prev = NULL;
+    return cond;
+  }
+}
+
+condition *del_cond(struct condition *cond){
+  if(cond != NULL){
+    if(cond->prev != NULL){
+      cond = cond->prev;
+      cond->next = NULL;
+    }
+    else cond = NULL;
+    return cond;
+  }
+  else return NULL;
 }

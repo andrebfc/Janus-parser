@@ -19,6 +19,7 @@ int count_space(char *tmp);
 typedef rda* ptr_rda;
 typedef instruction* ptr_isp;
 typedef argument* ptr_arg;
+typedef condition* ptr_cond;
 ptr_rda iter = NULL;
 ptr_rda head = NULL;
 ptr_isp isp = NULL;
@@ -26,6 +27,9 @@ ptr_arg arg = NULL;
 ptr_arg iter_arg = NULL;
 ptr_isp iter_isp = NULL;
 ptr_isp isp_assert = NULL;
+
+ptr_cond iter_cond = NULL;
+
 /*function for writing c file */
 int declare_fun(struct rda *rda,struct argument *arg,int reverse); //flag = 0 forward, flag = 1 backward
 int write_file(rda*,argument*,instruction*,int flag,int main_r);
@@ -238,11 +242,24 @@ void get_token(char *token){
      else if(strcmp(token,r_if)==0){
        iter_isp->flag_sub = 1;
        //create a sub rda
-       iter->sub_rda = create_rda(iter->sub_rda,iter_arg,iter_isp);
-       iter->sub_rda->sup_rda = iter;
-       iter = iter->sub_rda;
-       iter_arg = iter->arg;
-       iter_isp = iter->isp;
+       if(iter->sub_rda == NULL){
+         iter->sub_rda = create_rda(iter->sub_rda,iter_arg,iter_isp);
+         iter->sub_rda->sup_rda = iter;
+         iter->sub_rda->f_ist = iter_isp;
+         iter = iter->sub_rda;
+         iter_arg = iter->arg;
+         iter_isp = iter->isp;
+       }
+       else {
+         iter = iter->sub_rda;
+         while(iter->next != NULL){
+           iter = iter->next;
+         }
+         iter = create_rda(iter,iter_arg,iter_isp);
+         iter->f_ist = iter_isp;
+         iter_arg = iter->arg;
+         iter_isp = iter->isp;
+       }
        asprintf(&(iter->name),token);
        w_if_condition = 1;
      }
@@ -349,6 +366,7 @@ int get_instruction(char *token, char *tmp){
     else if(strcmp(token,fi)==0){
       get_token(token);
       get_sub_instruction(tmp_if_condition);
+      reset_arr(tmp_if_condition);
       w_assert = 0;
       w_if_assert = 0;
       isp_assert = NULL;
@@ -552,10 +570,12 @@ int write_instruction(struct instruction *isp,int flag){
   int close_ = 0;
   char istruzione[SIZE];
   strcpy(istruzione,"\t");
+
   if(isp->type != NULL){
     if (strcmp(isp->type,condition)==0){
       retrive_instruction(isp,istruzione,0);
-      strcpy(if_condition,istruzione);//insert if condition for assert on else reverse
+      //strcpy(if_condition,istruzione);//insert if condition for assert on else reverse
+      iter_cond = add_cond(iter_cond,istruzione);
       strcat(istruzione,"){\n");
       fprintf(out,"%s",istruzione);
       return 0;
@@ -565,6 +585,7 @@ int write_instruction(struct instruction *isp,int flag){
         if(w_if){
           strcat(istruzione,"\tassert(");
           close_ = 1;
+          w_if = 0;
         }
         else {
           strcat(istruzione,"\tassert(!(");
@@ -587,6 +608,7 @@ int write_instruction(struct instruction *isp,int flag){
   }
   else if(close_ == 2){
     strcat(istruzione,"))");
+    //reset_arr(if_condition);
     close_ = 0;
   }
   if(strcmp(istruzione,"\t")==0 || strcmp(istruzione,"\t\t")==0){
@@ -643,16 +665,18 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
     }
     arg = arg->next;
   }
-  while (isp != NULL){
-    // find sub rda flag
+  while(isp != NULL){
+    //find sub rda
     if(isp->flag_sub == 1){
       ptr_rda rdatmp = iter->sub_rda;
       ptr_isp isptmp;
-      if(rdatmp == NULL){
-        fprintf(stderr,"error null point");
+      // search rda
+      while(rdatmp->f_ist != isp){
+        rdatmp = rdatmp->next;
       }
-      while(rdatmp != NULL){
+      for(int i = 0; i < 2;i++){
         isptmp = rdatmp->isp;
+        // if case
         if(strcmp(rdatmp->name,r_if)==0){
           w_if = 1;
         }
@@ -672,10 +696,10 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
     isp = isp->next;
   }
   if(flag == 1){
-      fprintf(out,"\t%s\n\n","}");
+    fprintf(out,"\t%s\n\n","}");
   }
   else{
-      fprintf(out,"%s\n\n","}");
+    fprintf(out,"%s\n\n","}");
   }
   return 0;
 }
@@ -702,7 +726,11 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
     if(isp->flag_sub == 1){
       ptr_rda rdatmp = iter->sub_rda;
       ptr_isp isptmp;
-      while(rdatmp != NULL){
+      //search rda
+      while(rdatmp->f_ist != isp){
+        rdatmp = rdatmp->next;
+      }
+      for(int i = 0;i < 2;i++){
         if(strcmp(rdatmp->name,r_else)==0){
           w_else = 1;
         }
@@ -730,7 +758,14 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
   if (isp == head_isp){
       write_reverse_instruction(isp,flag);// first instruction
       if(w_else){//else assert
-        fprintf(out,"\t\tassert(!(%s));\n",if_condition);
+        //fprintf(out,"\t\tassert(!(%s));\n",if_condition);
+        fprintf(out,"\t\tassert(!(%s));\n",iter_cond->cond);
+        //reset_arr(if_condition);
+        cout<<iter_cond->cond<<endl;
+        if(iter_cond->prev != NULL){
+          iter_cond = iter_cond->prev;
+          iter_cond->next = NULL;
+        }
         w_else = 0;
       }
   }
