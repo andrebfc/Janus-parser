@@ -7,7 +7,7 @@ fork
   asend(x1,a)
 and
  int x2
- //arcv(x2,a)
+ //srcv(x2,a)
  arcv(x2,a)
 join
 
