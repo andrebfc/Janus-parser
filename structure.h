@@ -9,6 +9,13 @@ struct call_ist{
   char *name = NULL;
 };
 
+struct msgch{
+  char *type = NULL;
+  char *value = 0;
+  char *port = NULL;
+  msgch *next;
+};
+
 struct instruction {
   char *type = NULL;
   char *l_value = NULL;
@@ -16,6 +23,7 @@ struct instruction {
   char *op = NULL;
   int flag_sub = 0;
   call_ist *call;
+  msgch *msg = NULL;
   instruction *next;
   instruction *prev;
 };

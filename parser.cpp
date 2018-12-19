@@ -40,10 +40,12 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
 int write_reverse(rda*,argument*,instruction*,int flag);
 int write_reverse_instruction(struct instruction *isp,int flag_indent);
 void retrive_instruction(struct instruction *isp,char ist[],int reverse);
+void write_program_thread(struct rda *search,const char *type);
 
 /*function for common use*/
 void swap_string(struct instruction *isp,char ist[]);
 void reset_arr(char a[]);
+void iter_argument_declare(struct argument *arg);
 
 bool procedure_open = 0;
 bool w_name_procedure = 0;
@@ -58,6 +60,12 @@ bool w_else = 0;
 bool main_r = 0;
 bool w_comment = 0;
 bool w_t_comment = 0;
+bool w_fork_p1 = 0;
+bool w_fork_p2 = 0;
+bool write_fork = 0;
+bool declare_thread = 0;
+bool w_msg = 0;
+bool w_port = 0;
 int count_procedure = 0;
 int count_line = 0;
 int countsl = 0;
@@ -73,6 +81,15 @@ const char *r_else = "else";
 const char *fi = "fi";
 const char *condition = "condition";
 const char *r_assert = "assert";
+const char *r_fork = "fork";
+const char *r_andfork = "and";
+const char *r_joinfork = "join";
+const char *init = "\t\n\tsem_init(&mutex,0,1);\n\tpthread_create(&p1,NULL,program_one,NULL);\n\tpthread_create(&p2,NULL,program_two,NULL);\n\tpthread_join(p1,NULL);\n\tpthread_join(p2,NULL);\n\tsem_destroy(&mutex);\n\n";
+const char *r_ssend = "ssend";
+const char *r_srcv = "srcv";
+const char *r_asend = "asend";
+const char *r_arcv = "arcv";
+char *tmp_port;
 
 
 FILE *out;
@@ -107,7 +124,6 @@ int main(int argc, char const *argv[]) {
     fprintf(stderr,"Error argument\n");
     exit(1);
   }
-
   file = fopen(prog,"r");
   comment = fopen("./comment.txt","w");
 
@@ -144,28 +160,32 @@ int main(int argc, char const *argv[]) {
       }
       //string "procedure" and name on tmp
       else if(c == 40 ){ // 40 = (
-        tmp[i] = '\0';
-        token = strtok(tmp,delim);
-        get_token(token);
-        reset_arr(tmp);
-        i = 0;
+        if(w_comment!=1){
+          tmp[i] = '\0';
+          token = strtok(tmp,delim);
+          get_token(token);
+          reset_arr(tmp);
+          i = 0;
+        }
       }
       //argoment on tmp
       else if(c==41){ // 41 = )
-        tmp[i] = '\0';
-        if(w_call_arg){ //case call or uncall
-          asprintf(&(iter_isp->call->arg),tmp);
-          w_call_arg = 0;
+        if(w_comment!=1){
+          tmp[i] = '\0';
+          if(w_call_arg){ //case call or uncall
+            asprintf(&(iter_isp->call->arg),tmp);
+            w_call_arg = 0;
+          }
+          else {
+            w_argument = 1;
+            token = strtok(tmp,delim);
+            get_token(token);
+            w_argument = 0;     // close wait argument
+            procedure_open = 1; // open procedure
+          }
+          reset_arr(tmp);
+          i = 0;
         }
-        else {
-          w_argument = 1;
-          token = strtok(tmp,delim);
-          get_token(token);
-          w_argument = 0;     // close wait argument
-          procedure_open = 1; // open procedure
-        }
-        reset_arr(tmp);
-        i = 0;
       }
       //find a comment tag
       else if(c==47){ // 47 = /
@@ -197,11 +217,54 @@ int main(int argc, char const *argv[]) {
     }
     fclose(file);
   }
+  else{
+    fprintf(stderr,"%s\n","error open input file");
+    exit(1);
+  }
   iter = head;
-  out = fopen("./out.cpp","w");
+  out = fopen("./outfile/out.cpp","w");
   if(out){
-    fprintf(out,"%s\n%s\n%s\n\n","#include <stdio.h>","#include <assert.h>","#include <math.h>");
+    if(declare_thread){
+      fprintf(out,"%s\n%s\n%s\n%s\n%s\"%s\"\n\n","#include <stdio.h>","#include <assert.h>","#include <math.h>","#include <semaphore.h>","#include ","msgqueue.h");
+    }
+    else{
+      fprintf(out,"%s\n%s\n%s\n\n","#include <stdio.h>","#include <assert.h>","#include <math.h>");
+    }
+    //declaration function
+    while(iter != NULL){
+      if(strcmp(iter->name,r_main)!=0){
+        declare_fun(iter,iter->arg,0);
+        if(iter->arg != NULL){
+          iter_argument_declare(iter->arg);
+        }
+        else{
+          fprintf(out,"%s\n",");");
+        }
+        declare_fun(iter,iter->arg,1);
+        if(iter->arg != NULL){
+          iter_argument_declare(iter->arg);
+        }
+        else{
+          fprintf(out,"%s\n",");");
+        }
+      }
+	    iter = iter->next;
+    }
+    if(declare_thread){
+      fprintf(out,"%s\n","void *program_one(void *arg);");
+      fprintf(out,"%s\n\n","void *program_two(void *arg);");
+    }
+    iter = head;
     write_file(iter,iter->arg,iter->isp,0,main_r);//flag 0 for indent
+    if(declare_thread){
+      iter = head;
+      fprintf(out,"%s\n","void *program_one(void *arg){");
+      write_program_thread(iter,r_fork);
+      fprintf(out,"%s\n","}");
+      fprintf(out,"%s\n","void *program_two(void *arg){");
+      write_program_thread(iter,r_andfork);
+      fprintf(out,"%s\n","}");
+    }
   }
   else{
     fprintf(stderr,"error to create out file");
@@ -292,6 +355,56 @@ void get_token(char *token){
        asprintf(&(iter_isp->type),r_assert);
        w_assert = 1;
      }
+     //token is fork
+     else if(strcmp(token,r_fork)==0){
+       declare_thread = 1;
+       iter_isp->flag_sub = 1;
+       //create a sub rda
+       if(iter->sub_rda == NULL){
+         iter->sub_rda = create_rda(iter->sub_rda,iter_arg,iter_isp);
+         iter->sub_rda->sup_rda = iter;
+         iter->sub_rda->f_ist = iter_isp;
+         iter = iter->sub_rda;
+         iter_arg = iter->arg;
+         iter_isp = iter->isp;
+       }
+       else {
+         iter = iter->sub_rda;
+         while(iter->next != NULL){
+           iter = iter->next;
+         }
+         iter = create_rda(iter,iter_arg,iter_isp);
+         iter->f_ist = iter_isp;
+         iter_arg = iter->arg;
+         iter_isp = iter->isp;
+       }
+       asprintf(&(iter->name),token);
+       //reset_arr(tmp_if_condition);
+       w_fork_p1 = 1;
+     }
+     //token is and
+    else if(strcmp(token,r_andfork)==0){
+      //w_fork_p1 = 0;
+      //reset_arr(tmp_if_condition);
+      iter = create_rda(iter,iter_arg,iter_isp);
+      iter_arg = iter->arg;
+      iter_isp = iter->isp;
+      asprintf(&(iter->name),r_andfork);
+      w_fork_p2 = 1;
+    }
+    else if(strcmp(token,r_joinfork)==0){
+    }
+    // token is ssend srcv asend arcv
+    else if(strcmp(token,r_ssend)==0 || strcmp(token,r_srcv)==0 || strcmp(token,r_asend)==0 || strcmp(token,r_arcv)==0){
+      if(iter->isp == NULL){
+        iter->isp = create_isp(iter->isp);
+        iter_isp = iter->isp;
+      }
+      //asprintf(&(iter_isp->type),token);
+      iter_isp->msg = new msgch;
+      asprintf(&(iter_isp->msg->type),token);
+      w_msg = 1;
+    }
      // token not know
      else {
        // wait procedure name
@@ -307,7 +420,19 @@ void get_token(char *token){
        }
        // wait argument
        else if(w_argument){
+         if(w_msg){
+            //iter_isp->msg = new msgch;
+            asprintf(&(iter_isp->msg->value),token);
+            w_msg = 0;
+            w_port = 1;
+         }
+         else if(w_port){
+           asprintf(&(iter_isp->msg->port),token);
+           w_port = 0;
+         }
+         else {
          asprintf(&(iter_arg->name),token);
+        }
        }
        // wait call or uncall name function
        else if(w_call_name){
@@ -322,6 +447,15 @@ void get_token(char *token){
        else if(w_assert){
          strcat(tmp_if_condition,token);
        }
+       // wait program
+       else if (w_fork_p1){
+         strcat(tmp_if_condition,token);
+       }
+       /*
+       else if (w_fork_p2){
+         strcat(tmp_if_condition,token);
+       }
+       */
        // token not know and not wait anything
        else {
          fprintf(stderr,"%s%d\n","Error invalid token at line: ",count_line);
@@ -382,10 +516,36 @@ int get_instruction(char *token, char *tmp){
       //iter_arg = iter->arg;
       return 5;
     }
+    // find fork
+    else if(strcmp(token,r_fork)==0){
+      get_token(token);
+      return 6;
+    }
+    else if(strcmp(token,r_andfork)==0){
+      get_token(token);
+      return 7;
+    }
+    else if(strcmp(token,r_joinfork)==0){
+      // return at first rda element
+      while(iter->prev != NULL){
+        iter = iter->prev;
+      }
+
+      iter = iter->sup_rda;
+      iter_isp = iter->isp;
+      while(iter_isp->next != NULL){
+        iter_isp = iter_isp->next;
+      }
+      w_fork_p1 = 0;
+      return 8;
+    }
+    else if(strcmp(token,r_ssend)==0 || strcmp(token,r_srcv)==0 || strcmp(token,r_asend)==0 || strcmp(token,r_arcv)==0){
+      w_msg = 1;
+    }
     // get sub instruction
     else {
       get_sub_instruction(tmp);
-      return 6;
+      return 9;
     }
     token = strtok(NULL, delim);
   }
@@ -514,43 +674,44 @@ int write_file(struct rda *iter,struct argument *arg, struct instruction *isp,in
 
 // write a declaration function
 int declare_fun(struct rda *rda,struct argument *arg,int reverse){
+  char declare[SIZE];
   if(rda == NULL){
+    return 0;
+  }
+  //fork case
+  else if(strcmp(rda->name,r_fork)==0 || strcmp(rda->name,r_andfork)==0){
     return 0;
   }
   //write main
   else if(strcmp(rda->name,r_main)==0){
-      char dichiarazione[SIZE];
-      strcpy(dichiarazione,"int main(int argc, char const *argv[]) {\n");
-      fprintf(out,"%s",dichiarazione);
+      strcpy(declare,"int main(int argc, char const *argv[]) {\n");
+      fprintf(out,"%s",declare);
     return 0;
   }
   // write if then else constructor
   else if(strcmp(rda->name,r_if)==0){
-    char dichiarazione[SIZE];
-    strcpy(dichiarazione,"\tif(");
-    fprintf(out,"%s",dichiarazione);
+    strcpy(declare,"\tif(");
+    fprintf(out,"%s",declare);
     return 0;
   }
   else if(strcmp(rda->name,r_else)==0){
-    char dichiarazione[SIZE];
-    strcpy(dichiarazione,"\telse {\n");
-    fprintf(out,"%s",dichiarazione);
+    strcpy(declare,"\telse {\n");
+    fprintf(out,"%s",declare);
     return 0;
   }
   // write a declaration function procedure
   else{
     if(strcmp(rda->name,r_main)!=0){
-      char dichiarazione[SIZE];
-      strcpy(dichiarazione,"void ");
-      strcat(dichiarazione,rda->name);
+      strcpy(declare,"void ");
+      strcat(declare,rda->name);
       if(reverse == 0){
-        strcat(dichiarazione,"_forward");
+        strcat(declare,"_forward");
       }
       else{
-        strcat(dichiarazione,"_reverse");
+        strcat(declare,"_reverse");
       }
-      strcat(dichiarazione,"(");
-      fprintf(out,"%s",dichiarazione);
+      strcat(declare,"(");
+      fprintf(out,"%s",declare);
     }
     return 0;
   }
@@ -558,11 +719,13 @@ int declare_fun(struct rda *rda,struct argument *arg,int reverse){
 
 // write argument for function
 int write_arg(struct argument *arg){
-  char argument[SIZE];
-  strcpy(argument,arg->type);
-  strcat(argument," &");
-  strcat(argument,arg->name);
-  fprintf(out,"%s",argument);
+  if(arg != NULL){
+    char argument[SIZE];
+    strcpy(argument,arg->type);
+    strcat(argument," &");
+    strcat(argument,arg->name);
+    fprintf(out,"%s",argument);
+  }
 }
 
 //write instruction for function
@@ -620,41 +783,13 @@ int write_instruction(struct instruction *isp,int flag){
   }
 }
 
-// write call forward and reverse
-int write_call(struct instruction *isp,int reverse, int indent){
-  char call[SIZE];
-  if(indent == 1){
-    strcpy(call,"\t\t");
-  }
-  else {
-    strcpy(call,"\t");
-  }
-  if(strcmp(isp->call->type,"call")==0){
-    strcat(call,isp->call->name);
-    if(reverse == 0){
-      strcat(call,"_forward(");
-    }
-    else {
-      strcat(call,"_reverse(");
-    }
-  }
-  else if(strcmp(isp->call->type,"uncall")==0){
-    strcat(call,isp->call->name);
-    if(reverse == 0){
-      strcat(call,"_reverse(");
-    }
-    else{
-      strcat(call,"_forward(");
-    }
-  }
-  strcat(call,isp->call->arg);
-  strcat(call,");\n");
-  fprintf(out,"%s",call);
-}
 
 // write function forward
 int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp,int flag){
   declare_fun(iter,arg,0);
+  if(arg == NULL && strcmp(iter->name,r_main)!=0 && strcmp(iter->name,r_if)!=0 && strcmp(iter->name,r_else)!=0){
+    fprintf(out,"%s\n","){");
+  }
   while(arg != NULL){
     write_arg(arg);
     if(arg->next == NULL){
@@ -674,14 +809,28 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
       while(rdatmp->f_ist != isp){
         rdatmp = rdatmp->next;
       }
-      for(int i = 0; i < 2;i++){
-        isptmp = rdatmp->isp;
-        // if case
-        if(strcmp(rdatmp->name,r_if)==0){
-          w_if = 1;
+      if(strcmp(rdatmp->name,r_fork)==0){
+        fprintf(out,"\t%s",init);
+      }
+      /*
+      else if(strcmp(rdatmp->name,r_joinfork)==0){
+        flag = 2;
+      }
+      */
+      else {
+        for(int i = 0; i < 2;i++){
+          isptmp = rdatmp->isp;
+          // if case
+          if(strcmp(rdatmp->name,r_if)==0){
+            w_if = 1;
+            flag = 1;
+          }
+        write_forward(rdatmp,NULL,isptmp,flag);//flag 1
+        if(rdatmp->next != NULL){
+          rdatmp = rdatmp->next;
         }
-        write_forward(rdatmp,NULL,isptmp,1);//flag 1
-        rdatmp = rdatmp->next;
+        else rdatmp = NULL;
+        }
       }
     }
     write_instruction(isp,flag);
@@ -698,6 +847,9 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
   if(flag == 1){
     fprintf(out,"\t%s\n\n","}");
   }
+  else if(flag == 2){
+    return 0;
+  }
   else{
     fprintf(out,"%s\n\n","}");
   }
@@ -707,6 +859,9 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
 // write function reverse
 int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,int flag){
   declare_fun(iter,arg,1);
+  if(arg == NULL && strcmp(iter->name,r_main)!=0 && strcmp(iter->name,r_if)!=0 && strcmp(iter->name,r_else)!=0){
+    fprintf(out,"%s\n","){");
+  }
   while(arg != NULL){
     write_arg(arg);
     if(arg->next == NULL){
@@ -730,15 +885,23 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
       while(rdatmp->f_ist != isp){
         rdatmp = rdatmp->next;
       }
-      for(int i = 0;i < 2;i++){
-        if(strcmp(rdatmp->name,r_else)==0){
-          w_else = 1;
-        }
-        isptmp = rdatmp->isp;
-        write_reverse(rdatmp,NULL,isptmp,1);//flag 1 = reverse
-        rdatmp = rdatmp->next;
+      //fork case
+      if(strcmp(rdatmp->name,r_fork)==0){
+        fprintf(out,"%s",init);
       }
-
+      else if(strcmp(rdatmp->name,r_andfork)==0){
+      }
+      //if/else case
+      else {
+        for(int i = 0;i < 2;i++){
+          if(strcmp(rdatmp->name,r_else)==0){
+            w_else = 1;
+          }
+          isptmp = rdatmp->isp;
+          write_reverse(rdatmp,NULL,isptmp,1);//flag 1 = reverse
+          rdatmp = rdatmp->next;
+        }
+      }
     }
     // find call on sub rda
     if(isp->call != NULL){
@@ -858,8 +1021,89 @@ void retrive_instruction(struct instruction *isp,char ist[],int reverse){
   }
 }
 
+// write call forward and reverse
+int write_call(struct instruction *isp,int reverse, int indent){
+  char call[SIZE];
+  if(indent == 1){
+    strcpy(call,"\t\t");
+  }
+  else {
+    strcpy(call,"\t");
+  }
+  if(strcmp(isp->call->type,"call")==0){
+    strcat(call,isp->call->name);
+    if(reverse == 0){
+      strcat(call,"_forward(");
+    }
+    else {
+      strcat(call,"_reverse(");
+    }
+  }
+  else if(strcmp(isp->call->type,"uncall")==0){
+    strcat(call,isp->call->name);
+    if(reverse == 0){
+      strcat(call,"_reverse(");
+    }
+    else{
+      strcat(call,"_forward(");
+    }
+  }
+  strcat(call,isp->call->arg);
+  strcat(call,");\n");
+  fprintf(out,"%s",call);
+}
+
 void reset_arr(char a[]){
   for(int i = 0; i < SIZE; i++){
     a[i]=0;
+  }
+}
+
+void iter_argument_declare(struct argument *arg){
+  ptr_arg decarg = arg;
+  while(decarg != NULL){
+    write_arg(decarg);
+    if(decarg->next != NULL){
+      fprintf(out,"%s",", ");
+    }
+    else {
+      fprintf(out,"%s\n",");");
+    }
+    decarg = decarg->next;
+  }
+}
+// write function thread
+void write_program_thread(struct rda *search,const char *type){
+  while(search != NULL){
+    if(strcmp(search->name,type)==0){
+
+      ptr_isp isp = search->isp;
+      while(isp != NULL){
+        write_instruction(isp,0);
+        if(isp->call != NULL){
+          write_call(isp,0,0);//0 = forward, 1 = 1+indent
+        }
+        if(isp->msg != NULL){
+
+          if(strcmp(type,r_fork)==0){
+            asprintf(&tmp_port,isp->msg->port);
+            fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P1",");");
+          }
+          else{
+            //check port
+            if(strcmp(tmp_port,isp->msg->port)!=0){
+              fprintf(stderr,"error port\n");
+              exit(1);
+            }
+            fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P2",");");
+          }
+        }
+        isp = isp->next;
+      }
+    }
+    if(search->sub_rda != NULL){
+      write_program_thread(search->sub_rda,type);
+    }
+    search = search->next;
   }
 }
