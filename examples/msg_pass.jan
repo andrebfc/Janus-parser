@@ -1,0 +1,15 @@
+procedure test()
+
+fork
+  int x1
+  x1 = 5
+  //ssend(x1,a)
+  asend(x1,a)
+and
+ int x2
+ //arcv(x2,a)
+ arcv(x2,a)
+join
+
+procedure main()
+    call test()
