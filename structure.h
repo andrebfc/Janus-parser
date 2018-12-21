@@ -22,6 +22,7 @@ struct instruction {
   char *r_value = NULL;
   char *op = NULL;
   int flag_sub = 0;
+  int loc = 0; //0=null, 1=local,2=delocal
   call_ist *call;
   msgch *msg = NULL;
   instruction *next;
@@ -37,6 +38,7 @@ struct argument {
 struct rda {
   char *name;
   argument *arg;
+  bool wr = 0; // bool to set when i write this rda
   instruction *isp;
   instruction *f_ist;
   rda *next;
@@ -49,6 +51,11 @@ struct condition{
   char *cond;
   condition *next;
   condition *prev;
+};
+
+struct decport{
+  char *name;
+  decport *next;
 };
 
 rda *create_rda(struct rda *iter, struct argument *iter_arg, struct instruction *iter_isp);

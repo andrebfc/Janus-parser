@@ -20,6 +20,7 @@ typedef rda* ptr_rda;
 typedef instruction* ptr_isp;
 typedef argument* ptr_arg;
 typedef condition* ptr_cond;
+typedef decport *ptr_port;
 ptr_rda iter = NULL;
 ptr_rda head = NULL;
 ptr_isp isp = NULL;
@@ -29,6 +30,8 @@ ptr_isp iter_isp = NULL;
 ptr_isp isp_assert = NULL;
 
 ptr_cond iter_cond = NULL;
+ptr_port port_h = NULL;
+ptr_port port_t = NULL;
 
 /*function for writing c file */
 int declare_fun(struct rda *rda,struct argument *arg,int reverse); //flag = 0 forward, flag = 1 backward
@@ -37,8 +40,8 @@ int write_arg(struct argument *arg);
 int write_instruction(struct instruction *isp,int flag);
 int write_call(struct instruction *isp,int flag, int indent);
 int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp,int flag);
-int write_reverse(rda*,argument*,instruction*,int flag);
-int write_reverse_instruction(struct instruction *isp,int flag_indent);
+int write_reverse(rda*,argument*,instruction*,int flag,int main_flag);
+int write_reverse_instruction(struct instruction *isp,int flag_indent,int main_flag);
 void retrive_instruction(struct instruction *isp,char ist[],int reverse);
 void write_program_thread(struct rda *search,const char *type);
 
@@ -66,10 +69,13 @@ bool write_fork = 0;
 bool declare_thread = 0;
 bool w_msg = 0;
 bool w_port = 0;
+bool w_dec_port = 0;
 int count_procedure = 0;
 int count_line = 0;
 int countsl = 0;
 int countax = 0;
+int count_fork = 0;
+int count_print_fork = 0;
 
 const char delim[5] = " (),";
 const char *procedure = "procedure";
@@ -84,7 +90,9 @@ const char *r_assert = "assert";
 const char *r_fork = "fork";
 const char *r_andfork = "and";
 const char *r_joinfork = "join";
-const char *init = "\t\n\tsem_init(&mutex,0,1);\n\tpthread_create(&p1,NULL,program_one,NULL);\n\tpthread_create(&p2,NULL,program_two,NULL);\n\tpthread_join(p1,NULL);\n\tpthread_join(p2,NULL);\n\tsem_destroy(&mutex);\n\n";
+const char *inita = "\t\n\tsem_init(&mutex,0,1);\n\tpthread_create(&p1,NULL,prog_";
+const char *initb = ",NULL);\n\tpthread_create(&p2,NULL,prog_";
+const char *initc = ",NULL);\n\tpthread_join(p1,NULL);\n\tpthread_join(p2,NULL);\n\tsem_destroy(&mutex);\n\n";
 const char *r_ssend = "ssend";
 const char *r_srcv = "srcv";
 const char *r_asend = "asend";
@@ -132,6 +140,9 @@ int main(int argc, char const *argv[]) {
       if(c == '\n'){  //all line on tmp
         count_line++;
         tmp[i]='\0';
+        if(w_dec_port){
+          w_dec_port = 0;
+        }
         // find a comment and save on comment file
         if(w_comment){
           w_comment = 0;
@@ -226,6 +237,12 @@ int main(int argc, char const *argv[]) {
   if(out){
     if(declare_thread){
       fprintf(out,"%s\n%s\n%s\n%s\n%s\"%s\"\n\n","#include <stdio.h>","#include <assert.h>","#include <math.h>","#include <semaphore.h>","#include ","msgqueue.h");
+      while(port_h != NULL){
+        if(port_h->name != NULL && strcmp(port_h->name,"port")!=0){
+          fprintf(out,"%s%s;\n","struct msgq *",port_h->name);
+        }
+        port_h = port_h->next;
+      }
     }
     else{
       fprintf(out,"%s\n%s\n%s\n\n","#include <stdio.h>","#include <assert.h>","#include <math.h>");
@@ -251,19 +268,23 @@ int main(int argc, char const *argv[]) {
 	    iter = iter->next;
     }
     if(declare_thread){
-      fprintf(out,"%s\n","void *program_one(void *arg);");
-      fprintf(out,"%s\n\n","void *program_two(void *arg);");
+      for(int i=0;i<count_fork;i++){
+        fprintf(out,"%s%d%s\n","void *prog_",i,"(void *arg);");
+      }
+      fprintf(out,"\n");
     }
     iter = head;
     write_file(iter,iter->arg,iter->isp,0,main_r);//flag 0 for indent
     if(declare_thread){
       iter = head;
-      fprintf(out,"%s\n","void *program_one(void *arg){");
-      write_program_thread(iter,r_fork);
-      fprintf(out,"%s\n","}");
-      fprintf(out,"%s\n","void *program_two(void *arg){");
-      write_program_thread(iter,r_andfork);
-      fprintf(out,"%s\n","}");
+      for(int i=0;i<count_fork;i+=2){
+        fprintf(out,"%s%d%s\n","void *prog_",i,"(void *arg){");
+        write_program_thread(iter,r_fork);
+        fprintf(out,"%s\n","}");
+        fprintf(out,"%s%d%s\n","void *prog_",i+1,"(void *arg){");
+        write_program_thread(iter,r_andfork);
+        fprintf(out,"%s\n","}");
+      }
     }
   }
   else{
@@ -275,8 +296,8 @@ int main(int argc, char const *argv[]) {
 
 void get_token(char *token){
   while( token != NULL ) {
-    // token is procedure
-     if(strcmp(token,procedure)==0){
+     // token is procedure
+   if(strcmp(token,procedure)==0){
        count_procedure++;
        w_name_procedure = 1;
        procedure_open = 0;
@@ -290,6 +311,10 @@ void get_token(char *token){
          }
          asprintf(&(iter_arg->type),token);
        }
+     }
+     else if(strcmp(token,"local")==0){
+     }
+     else if(strcmp(token,"delocal")==0){
      }
      // token is call or uncall
      else if(strcmp(token,"call")==0 || strcmp(token,"uncall")==0){
@@ -358,6 +383,7 @@ void get_token(char *token){
      //token is fork
      else if(strcmp(token,r_fork)==0){
        declare_thread = 1;
+       count_fork++;
        iter_isp->flag_sub = 1;
        //create a sub rda
        if(iter->sub_rda == NULL){
@@ -386,11 +412,12 @@ void get_token(char *token){
     else if(strcmp(token,r_andfork)==0){
       //w_fork_p1 = 0;
       //reset_arr(tmp_if_condition);
+      count_fork++;
       iter = create_rda(iter,iter_arg,iter_isp);
       iter_arg = iter->arg;
       iter_isp = iter->isp;
       asprintf(&(iter->name),r_andfork);
-      w_fork_p2 = 1;
+      //w_fork_p2 = 1;
     }
     else if(strcmp(token,r_joinfork)==0){
     }
@@ -417,6 +444,20 @@ void get_token(char *token){
         }
         asprintf(&(iter->name),token);
         w_name_procedure = 0;
+       }
+       //wait port name
+       else if(w_dec_port){
+         if(port_t == NULL){
+           port_t = new decport;
+           port_t->next = NULL;
+           port_h = port_t;
+         }
+         else{
+           port_t->next = new decport;
+           port_t = port_t->next;
+           port_t->next = NULL;
+         }
+         asprintf(&(port_t->name),token);
        }
        // wait argument
        else if(w_argument){
@@ -451,11 +492,6 @@ void get_token(char *token){
        else if (w_fork_p1){
          strcat(tmp_if_condition,token);
        }
-       /*
-       else if (w_fork_p2){
-         strcat(tmp_if_condition,token);
-       }
-       */
        // token not know and not wait anything
        else {
          fprintf(stderr,"%s%d\n","Error invalid token at line: ",count_line);
@@ -476,10 +512,47 @@ int get_instruction(char *token, char *tmp){
       get_token(token);
       return 1;
     }
+    else if(strcmp(token,"print")==0){
+      asprintf(&(iter_isp->type),token);
+      count = count_space(tmp) + 6; //6 = print + space
+      str_cpy(post,tmp,count,strlen(tmp));
+      get_sub_instruction(post);
+      reset_arr(post);
+      count = 0;
+      return 1;
+    }
+    //token is port
+    else if(strcmp(token,"port")==0){
+       w_dec_port = 1;
+       port_h = new decport;
+       port_t = port_h;
+       get_token(token);
+       return 1;
+    }
     // find int instruction
     else if(strcmp(token,r_int)==0){
       asprintf(&(iter_isp->type),token);
       count = count_space(tmp) + 4; //4 = int + space
+      str_cpy(post,tmp,count,strlen(tmp)); // read post int
+      get_sub_instruction(post);
+      reset_arr(post);
+      count = 0;
+      return 2;
+    }
+    else if(strcmp(token,"local")==0){
+      asprintf(&(iter_isp->type),r_int);
+      iter_isp->loc = 1;
+      count = count_space(tmp) + 10;//4 int + 6 local
+      str_cpy(post,tmp,count,strlen(tmp)); // read post int
+      get_sub_instruction(post);
+      reset_arr(post);
+      count = 0;
+      return 1;
+    }
+    else if(strcmp(token,"delocal")==0){
+      asprintf(&(iter_isp->type),r_int);
+      iter_isp->loc = 2;
+      count = count_space(tmp) + 12;//4 int + 8 delocal
       str_cpy(post,tmp,count,strlen(tmp)); // read post int
       get_sub_instruction(post);
       reset_arr(post);
@@ -640,7 +713,7 @@ void swap_string(struct instruction *isp,char ist[]){
 
 /*function for writing c file*/
 
-int write_file(struct rda *iter,struct argument *arg, struct instruction *isp,int flag,int main_r){ // flag per indent sono nel sotto
+int write_file(struct rda *iter,struct argument *arg, struct instruction *isp,int flag,int main_r){
   if(iter == NULL){
     return 0;
   }
@@ -651,7 +724,7 @@ int write_file(struct rda *iter,struct argument *arg, struct instruction *isp,in
       write_forward(iter,arg,isp,flag);
       isp = iter->isp;
       arg = iter->arg;
-      write_reverse(iter,arg,isp,flag);
+      write_reverse(iter,arg,isp,flag,0);
     }
     // write main
     else {
@@ -664,7 +737,7 @@ int write_file(struct rda *iter,struct argument *arg, struct instruction *isp,in
       else{
         isp = iter->isp;
         arg = iter->arg;
-        write_reverse(iter,arg,isp,flag);
+        write_reverse(iter,arg,isp,flag,1);
       }
     }
     iter = iter->next;
@@ -728,7 +801,7 @@ int write_arg(struct argument *arg){
   }
 }
 
-//write instruction for function
+//write instruction for function forward
 int write_instruction(struct instruction *isp,int flag){
   int close_ = 0;
   char istruzione[SIZE];
@@ -755,9 +828,18 @@ int write_instruction(struct instruction *isp,int flag){
           close_ = 2;
         }
     }
-    else if (strcmp(isp->type,r_int)==0){
+    else if(strcmp(isp->type,"print")==0){
       strcat(istruzione,isp->type);
-      strcat(istruzione," ");
+      strcat(istruzione,"f(\"%d\\n\",");
+    }
+    else if (strcmp(isp->type,r_int)==0){
+      if(isp->loc == 2){
+          strcat(istruzione,"assert(");
+      }
+      else {
+        strcat(istruzione,isp->type);
+        strcat(istruzione," ");
+      }
     }
   }
   if(flag == 1){
@@ -773,6 +855,9 @@ int write_instruction(struct instruction *isp,int flag){
     strcat(istruzione,"))");
     //reset_arr(if_condition);
     close_ = 0;
+  }
+  if(isp->loc == 2){
+    strcat(istruzione,")");
   }
   if(strcmp(istruzione,"\t")==0 || strcmp(istruzione,"\t\t")==0){
     return 1;
@@ -810,13 +895,11 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
         rdatmp = rdatmp->next;
       }
       if(strcmp(rdatmp->name,r_fork)==0){
-        fprintf(out,"\t%s",init);
+        fprintf(out,"\t%s%d%s",inita,count_print_fork,initb);
+        count_print_fork++;
+        fprintf(out,"%d%s",count_print_fork,initc);
+        count_print_fork++;
       }
-      /*
-      else if(strcmp(rdatmp->name,r_joinfork)==0){
-        flag = 2;
-      }
-      */
       else {
         for(int i = 0; i < 2;i++){
           isptmp = rdatmp->isp;
@@ -857,7 +940,7 @@ int write_forward(struct rda *iter,struct argument *arg, struct instruction *isp
 }
 
 // write function reverse
-int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,int flag){
+int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,int flag,int main_flag){
   declare_fun(iter,arg,1);
   if(arg == NULL && strcmp(iter->name,r_main)!=0 && strcmp(iter->name,r_if)!=0 && strcmp(iter->name,r_else)!=0){
     fprintf(out,"%s\n","){");
@@ -872,6 +955,18 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
     }
     arg = arg->next;
   }
+  if(main_flag == 1){
+    ptr_isp int_isp = isp;
+    while(int_isp->next != NULL){
+      if (int_isp->type != NULL){
+        if (strcmp(int_isp->type,r_int)==0){
+          write_instruction(int_isp,flag);
+        }
+      }
+      int_isp = int_isp->next;
+    }
+  }
+
   ptr_isp head_isp = isp;
   while (isp->next != NULL){
     isp = isp->next;
@@ -887,7 +982,13 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
       }
       //fork case
       if(strcmp(rdatmp->name,r_fork)==0){
-        fprintf(out,"%s",init);
+        if(count_print_fork == count_fork){
+          count_print_fork--;
+        }
+        fprintf(out,"%s%d%s",inita,count_print_fork,initb);
+        count_print_fork--;
+        fprintf(out,"%d%s",count_print_fork,initc);
+        count_print_fork--;
       }
       else if(strcmp(rdatmp->name,r_andfork)==0){
       }
@@ -898,7 +999,7 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
             w_else = 1;
           }
           isptmp = rdatmp->isp;
-          write_reverse(rdatmp,NULL,isptmp,1);//flag 1 = reverse
+          write_reverse(rdatmp,NULL,isptmp,1,main_flag);//flag 1 = reverse
           rdatmp = rdatmp->next;
         }
       }
@@ -907,7 +1008,7 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
     if(isp->call != NULL){
       write_call(isp,1,0);//flag 1 = reverse, 1 = 1 + indent
     }
-    write_reverse_instruction(isp,flag);
+    write_reverse_instruction(isp,flag,main_flag);
     isp = isp->prev;
   }
   if(isp->call != NULL){
@@ -919,7 +1020,7 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
     }
   }
   if (isp == head_isp){
-      write_reverse_instruction(isp,flag);// first instruction
+      write_reverse_instruction(isp,flag,main_flag);// first instruction
       if(w_else){//else assert
         //fprintf(out,"\t\tassert(!(%s));\n",if_condition);
         fprintf(out,"\t\tassert(!(%s));\n",iter_cond->cond);
@@ -939,7 +1040,7 @@ int write_reverse(struct rda *iter,struct argument *arg,struct instruction *isp,
   }
 }
 
-int write_reverse_instruction(struct instruction *isp,int flag){ //0=1 tab, 1=2 tab, .....
+int write_reverse_instruction(struct instruction *isp,int flag,int main_flag){ //0=1 tab, 1=2 tab, .....
   char istruzione[SIZE];
   strcpy(istruzione,"\t");
 
@@ -963,15 +1064,30 @@ int write_reverse_instruction(struct instruction *isp,int flag){ //0=1 tab, 1=2 
       fprintf(out,"%s",istruzione);
       return 0;
     }
-    else if (strcmp(isp->type,r_int)==0){
+    else if(strcmp(isp->type,"print")==0){
       strcat(istruzione,isp->type);
-      strcat(istruzione," ");
+      strcat(istruzione,"f(\"%d\\n\",");
+    }
+    else if (strcmp(isp->type,r_int)==0){
+      if(main_flag == 1){ // not write declare var on reverse main
+        return 0;
+      }
+      if(isp->loc == 1){
+          strcat(istruzione,"assert(");
+      }
+      else {
+        strcat(istruzione,isp->type);
+        strcat(istruzione," ");
+      }
     }
   }
   if(flag == 1){
     strcat(istruzione,"\t");
   }
   retrive_instruction(isp,istruzione,1);
+  if(isp->loc == 1){
+    strcat(istruzione,")");
+  }
   if(strcmp(istruzione,"\t")==0 || strcmp(istruzione,"\t\t")==0){//if instruction is empty
     return 1;
   }
@@ -997,6 +1113,9 @@ void retrive_instruction(struct instruction *isp,char ist[],int reverse){
     }
     else{
       strcat(ist," ");
+      if(isp->loc == 1){ // local on reverse is assert
+        strcat(ist,"=");
+      }
       strcat(ist,isp->op);
       strcat(ist," ");
     }
@@ -1008,12 +1127,22 @@ void retrive_instruction(struct instruction *isp,char ist[],int reverse){
     else{
     strcat(ist," ");
     strcat(ist,isp->op);
+      if(isp->loc == 2){ //&& strcmp(isp->op,"=")==0){
+        strcat(ist,"=");
+      }
     strcat(ist," ");
     }
   }
   else if(isp->l_value != NULL && (isp->op == NULL || strcmp(isp->op," ")==0 || strcmp(isp->op,"")==0)){//case int x
-    strcat(ist," = 0");
-
+    if(isp->loc == 2 && reverse != 1){
+      strcat(ist," == 0");
+    }
+    else if(strcmp(isp->type,"print")==0){
+      strcat(ist,")");
+    }
+    else {
+      strcat(ist," = 0");
+    }
   }
 
   if(isp->r_value != NULL && strcmp(isp->r_value," ")!=0 && strcmp(isp->r_value,"")!=0){
@@ -1075,8 +1204,8 @@ void iter_argument_declare(struct argument *arg){
 // write function thread
 void write_program_thread(struct rda *search,const char *type){
   while(search != NULL){
-    if(strcmp(search->name,type)==0){
-
+    if(strcmp(search->name,type)==0 && search->wr == 0){
+      search->wr = 1;
       ptr_isp isp = search->isp;
       while(isp != NULL){
         write_instruction(isp,0);
@@ -1087,7 +1216,8 @@ void write_program_thread(struct rda *search,const char *type){
 
           if(strcmp(type,r_fork)==0){
             asprintf(&tmp_port,isp->msg->port);
-            fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P1",");");
+            //fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P1",");");
+            fprintf(out,"\t%s(%s,&%s,%s);\n",isp->msg->type,isp->msg->value,isp->msg->port,"P1");
           }
           else{
             //check port
@@ -1095,11 +1225,13 @@ void write_program_thread(struct rda *search,const char *type){
               fprintf(stderr,"error port\n");
               exit(1);
             }
-            fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P2",");");
+            //fprintf(out,"\t%s%s%s,%s,%s%s\n",isp->msg->type,"(",isp->msg->value,"&head","P2",");");
+            fprintf(out,"\t%s(%s,&%s,%s);\n",isp->msg->type,isp->msg->value,isp->msg->port,"P2");
           }
         }
         isp = isp->next;
       }
+      return;
     }
     if(search->sub_rda != NULL){
       write_program_thread(search->sub_rda,type);
