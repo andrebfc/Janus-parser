@@ -1,15 +1,22 @@
-procedure test()
+procedure test(int x1)
 
-fork
-  int x1
-  x1 = 5
-  //ssend(x1,a)
-  asend(x1,a)
-and
- int x2
- //srcv(x2,a)
- arcv(x2,a)
-join
+    print x1
+
+   fork
+      local int x2
+      x2 += 2
+      ssend(x2,a)
+      print x2
+      delocal int x2 = 2
+    and
+     local int x3
+     srcv(x3,a)
+     print x3
+     delocal int x3 = 2
+    join
 
 procedure main()
-    call test()
+    port a b
+    int x1
+    x1+=4
+    call test(x1)
